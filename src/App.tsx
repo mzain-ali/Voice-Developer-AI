@@ -84,9 +84,12 @@ Conversation rules:
    Fluency: <score 1-10>
    Feedback: <overall feedback on communication skills>
 
-7. Encourage the user to speak more. Ask follow-up questions.
-8. Keep explanations short and clear for voice conversation.
-9. If the user switches to translation mode, translate to English and respond in English.
+7. **Translation Mode**: If the user speaks in a language other than English, you MUST detect the language, translate it to English, and respond in English. You MUST use this EXACT format for your response:
+   Translated Text: <the user's text translated to English>
+   Response: <your natural response in English to that translated text>
+
+8. Encourage the user to speak more. Ask follow-up questions.
+9. Keep explanations short and clear for voice conversation.
 10. Occasionally introduce useful English phrases for professional conversations.`;
 
 interface TranscriptItem {
@@ -118,6 +121,31 @@ export default function App() {
   const processorRef = useRef<ScriptProcessorNode | null>(null);
   const audioQueueRef = useRef<Float32Array[]>([]);
   const nextStartTimeRef = useRef(0);
+  const transcriptEndRef = useRef<HTMLDivElement | null>(null);
+
+  // Persistence: Load from localStorage
+  useEffect(() => {
+    const savedIdioms = localStorage.getItem('devtalk_idioms');
+    const savedSnippets = localStorage.getItem('devtalk_snippets');
+    if (savedIdioms) setIdioms(JSON.parse(savedIdioms));
+    if (savedSnippets) setCodeSnippets(JSON.parse(savedSnippets));
+  }, []);
+
+  // Persistence: Save to localStorage
+  useEffect(() => {
+    localStorage.setItem('devtalk_idioms', JSON.stringify(idioms));
+  }, [idioms]);
+
+  useEffect(() => {
+    localStorage.setItem('devtalk_snippets', JSON.stringify(codeSnippets));
+  }, [codeSnippets]);
+
+  // Auto-scroll transcript
+  useEffect(() => {
+    if (transcriptEndRef.current) {
+      transcriptEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [transcript]);
 
   // Initialize Audio Context
   const initAudio = async () => {
@@ -354,6 +382,41 @@ export default function App() {
 
   const toggleMute = () => setIsMuted(!isMuted);
 
+  const downloadReport = () => {
+    if (!sessionSummary) return;
+    
+    const content = `
+DEV TALK - SESSION REPORT
+Date: ${new Date().toLocaleDateString()}
+-----------------------------------
+SUMMARY
+Mistakes Found: ${sessionSummary.mistakesCount}
+New Words Learned: ${sessionSummary.newWordsCount}
+Fluency Score: ${sessionSummary.fluencyScore}/10
+
+FEEDBACK
+${sessionSummary.feedback}
+
+-----------------------------------
+NEW IDIOMS CAPTURED
+${idioms.map(i => `- ${i.word}: ${i.definition}`).join('\n')}
+
+-----------------------------------
+TRANSCRIPT
+${transcript.map(t => `${t.role.toUpperCase()}: ${t.text}`).join('\n\n')}
+    `.trim();
+
+    const blob = new Blob([content], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `devtalk-report-${new Date().toISOString().split('T')[0]}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="min-h-screen bg-[#0a0502] text-[#e0d8d0] font-sans selection:bg-[#ff4e00]/30 overflow-hidden flex flex-col">
       {/* Background Atmosphere */}
@@ -381,6 +444,12 @@ export default function App() {
           </div>
         </div>
         <div className="flex items-center gap-4">
+          <button 
+            onClick={() => setTranscript([])}
+            className="text-[10px] uppercase tracking-widest font-bold text-white/40 hover:text-white/60 transition-colors"
+          >
+            Clear Chat
+          </button>
           <button 
             onClick={() => setShowSidebar(!showSidebar)}
             className="relative p-2 rounded-full bg-white/5 border border-white/10 text-white/60 hover:text-white transition-colors"
@@ -448,12 +517,20 @@ export default function App() {
                     </p>
                   </div>
 
-                  <button 
-                    onClick={() => setSessionSummary(null)}
-                    className="w-full py-4 rounded-xl bg-white text-black font-bold hover:bg-white/90 transition-colors"
-                  >
-                    Start New Session
-                  </button>
+                  <div className="flex gap-4">
+                    <button 
+                      onClick={() => setSessionSummary(null)}
+                      className="flex-1 py-4 rounded-xl bg-white text-black font-bold hover:bg-white/90 transition-colors"
+                    >
+                      Start New Session
+                    </button>
+                    <button 
+                      onClick={downloadReport}
+                      className="px-6 py-4 rounded-xl bg-white/10 text-white font-bold hover:bg-white/20 transition-colors flex items-center gap-2"
+                    >
+                      <BarChart3 className="w-5 h-5" /> Export
+                    </button>
+                  </div>
                 </motion.div>
               ) : !isActive && !isConnecting ? (
                 <motion.div 
@@ -560,7 +637,7 @@ export default function App() {
                   </div>
 
                   {/* Transcript Area */}
-                  <div className="h-48 w-full max-w-2xl mx-auto overflow-y-auto px-4 space-y-4 mask-fade-edges">
+                  <div className="h-48 w-full max-w-2xl mx-auto overflow-y-auto px-4 space-y-4 mask-fade-edges scroll-smooth">
                     {transcript.length === 0 && !isConnecting && (
                       <div className="text-center text-white/20 italic py-8">
                         Start speaking to see the transcript...
@@ -625,6 +702,7 @@ export default function App() {
                         </div>
                       </motion.div>
                     ))}
+                    <div ref={transcriptEndRef} />
                   </div>
                 </motion.div>
               )}
@@ -642,9 +720,26 @@ export default function App() {
               >
                 <div className="p-6 border-b border-white/10 flex justify-between items-center">
                   <h3 className="text-sm font-bold uppercase tracking-widest text-white/60">Knowledge Bank</h3>
-                  <button onClick={() => setShowSidebar(false)} className="p-1 hover:bg-white/10 rounded-full transition-colors">
-                    <X className="w-4 h-4" />
-                  </button>
+                  <div className="flex items-center gap-2">
+                    {(idioms.length > 0 || codeSnippets.length > 0) && (
+                      <button 
+                        onClick={() => {
+                          if (confirm('Clear all saved idioms and snippets?')) {
+                            setIdioms([]);
+                            setCodeSnippets([]);
+                            localStorage.removeItem('devtalk_idioms');
+                            localStorage.removeItem('devtalk_snippets');
+                          }
+                        }}
+                        className="text-[9px] uppercase tracking-widest font-bold text-red-400/60 hover:text-red-400 transition-colors px-2 py-1 rounded hover:bg-red-400/10"
+                      >
+                        Clear All
+                      </button>
+                    )}
+                    <button onClick={() => setShowSidebar(false)} className="p-1 hover:bg-white/10 rounded-full transition-colors">
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
                 
                 <div className="flex-1 overflow-y-auto p-6 space-y-8">
