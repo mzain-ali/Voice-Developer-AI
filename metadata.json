@@ -1,0 +1,5 @@
+{
+  "name": "DevTalk English Partner",
+  "description": "An AI voice conversation partner designed to help developers improve their English communication skills through real-time technical discussions.",
+  "requestFramePermissions": ["microphone"]
+}
